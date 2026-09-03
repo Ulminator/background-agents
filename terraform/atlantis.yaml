@@ -9,18 +9,29 @@ projects:
   branch: /^shipyard_dev$/
   autoplan:
     enabled: true
-    when_modified: &shipyard_when_modified
+    when_modified:
     - "*.tf"
     - ".terraform.lock.hcl"
-    # - "env/*.tfvars"
     - "../../modules/**/*.tf"
     - "../../d1/migrations/*.sql"
     - "../../../packages/**"
     - "../../../scripts/**"
+    - "!../../../packages/*/README.md"
+    - "!../../../packages/*/INTEGRATION.md"
+    - "env/dev.tfvars"
 - dir: terraform/environments/production
   name: shipyard-prod
   workspace: prod
   branch: /^shipyard_prod$/
   autoplan:
     enabled: true
-    when_modified: *shipyard_when_modified
+    when_modified:
+    - "*.tf"
+    - ".terraform.lock.hcl"
+    - "../../modules/**/*.tf"
+    - "../../d1/migrations/*.sql"
+    - "../../../packages/**"
+    - "../../../scripts/**"
+    - "!../../../packages/*/README.md"
+    - "!../../../packages/*/INTEGRATION.md"
+    - "env/prod.tfvars"
