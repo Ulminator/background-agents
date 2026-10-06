@@ -24,15 +24,9 @@ variable "worker_subdomain" {
   }
 }
 
-variable "script_path" {
-  description = "Path to the bundled JavaScript worker script file"
+variable "bundle_path" {
+  description = "Repository-relative path of the built bundle the deploy workflow uploads, e.g. packages/control-plane/dist/index.js."
   type        = string
-}
-
-variable "script_sha256" {
-  description = "Expected SHA-256 of the file at script_path. When set, a file that does not match fails the plan instead of being deployed. Null skips the check."
-  type        = string
-  default     = null
 }
 
 variable "kv_namespaces" {
@@ -75,6 +69,19 @@ variable "queue_bindings" {
   default = {}
 }
 
+variable "queue_consumers" {
+  description = "Queues this Worker consumes, keyed by queue name. Timeouts and delays are seconds, the unit Wrangler takes."
+  type = map(object({
+    dead_letter_queue         = optional(string)
+    max_batch_size            = optional(number)
+    max_batch_timeout_seconds = optional(number)
+    max_concurrency           = optional(number)
+    max_retries               = optional(number)
+    retry_delay_seconds       = optional(number)
+  }))
+  default = {}
+}
+
 variable "plain_text_bindings" {
   description = "Map of plain text environment variable bindings keyed by binding name"
   type = map(object({
@@ -100,40 +107,10 @@ variable "durable_objects" {
   default = {}
 }
 
-variable "enable_durable_object_bindings" {
-  description = "Enable DO bindings. Set false for initial deployment, true after first deployment succeeds."
-  type        = bool
-  default     = true
-}
-
 variable "enable_service_bindings" {
   description = "Enable service bindings. Set false if target workers don't exist yet."
   type        = bool
   default     = true
-}
-
-variable "migration_tag" {
-  description = "Migration tag for Durable Objects (increment when adding new DO classes)"
-  type        = string
-  default     = "v1"
-}
-
-variable "migration_old_tag" {
-  description = "Previous migration tag (for incremental DO migrations). Set when adding new DO classes to an existing worker."
-  type        = string
-  default     = null
-}
-
-variable "new_sqlite_classes" {
-  description = "DO class names that are NEW in this migration step. Only these are declared as new_sqlite_classes in the migration (not all durable_objects). If empty, defaults to all durable_objects class names (for fresh deployments)."
-  type        = list(string)
-  default     = []
-}
-
-variable "deleted_classes" {
-  description = "DO class names deleted in this migration step. Requires a new migration tag; surviving bindings remain enabled."
-  type        = list(string)
-  default     = []
 }
 
 variable "cron_triggers" {

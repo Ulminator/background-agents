@@ -6,10 +6,6 @@ on:
     paths:
       - "terraform/**"
       - "scripts/**"
-      - "packages/control-plane/**"
-      - "packages/slack-bot/**"
-      - "packages/github-bot/**"
-      - "packages/linear-bot/**"
       - "packages/modal-infra/**"
       - "packages/daytona-infra/**"
       - "packages/opencomputer-infra/**"
@@ -17,20 +13,13 @@ on:
       - "packages/sandbox-runtime/**"
       - "packages/sandbox-images/**"
       - "packages/vercel-infra/**"
-      - "packages/shared/**"
-      - "packages/web/**" # Web app deployed via Terraform when web_platform = "cloudflare"
       - ".github/workflows/terraform.yml"
-      - ".github/workflows/build-workers.yml"
       - ".nvmrc"
   pull_request:
     branches: [main]
     paths:
       - "terraform/**"
       - "scripts/**"
-      - "packages/control-plane/**"
-      - "packages/slack-bot/**"
-      - "packages/github-bot/**"
-      - "packages/linear-bot/**"
       - "packages/modal-infra/**"
       - "packages/daytona-infra/**"
       - "packages/opencomputer-infra/**"
@@ -38,10 +27,7 @@ on:
       - "packages/sandbox-runtime/**"
       - "packages/sandbox-images/**"
       - "packages/vercel-infra/**"
-      - "packages/shared/**"
-      - "packages/web/**"
       - ".github/workflows/terraform.yml"
-      - ".github/workflows/build-workers.yml"
       - ".nvmrc"
   workflow_dispatch: # Allow manual trigger
 
@@ -143,31 +129,17 @@ jobs:
           terraform test
         working-directory: terraform/modules/cloudflare-worker
 
-  # Builds the Worker bundles once, for plan or apply to download. Terraform
-  # deploys these files as built (build_workers_in_terraform = false) instead
-  # of rebuilding them mid-apply.
-  build:
-    name: Build
-    needs: [check-secrets]
-    if: needs.check-secrets.outputs.has-secrets == 'true'
-    uses: ./.github/workflows/build-workers.yml
-
   plan:
     name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [validate, check-secrets, build]
+    needs: [validate, check-secrets]
     if: github.event_name == 'pull_request' && needs.check-secrets.outputs.has-secrets == 'true'
     outputs:
       outcome: ${{ steps.plan.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Download worker bundles
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ needs.build.outputs.artifact-name }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -186,20 +158,6 @@ jobs:
             -backend-config="endpoints={s3=\"https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com\"}"
         working-directory: ${{ env.TF_WORKING_DIR }}
 
-      - name: Stage SchedulerDO deletion migration
-        run: |
-          set -euo pipefail
-          # Read state and parse it as separate steps: piping straight into jq
-          # turns a failed state read into an empty tag, which would silently
-          # skip the deletion migration and ship a worker whose class was never
-          # retired. An absent or empty state is still a valid "not v2" answer.
-          state="$(terraform state pull)"
-          current_tag="$(printf '%s' "$state" | jq -r '.resources[]? | select(.module == "module.control_plane_worker" and .type == "cloudflare_worker_version" and .name == "this") | .instances[0].attributes.migration_tag // empty')"
-          if [ "$current_tag" = "v2" ]; then
-            printf '%s\n' '{"control_plane_migration_tag":"v3","control_plane_migration_old_tag":"v2","control_plane_deleted_classes":["SchedulerDO"]}' > scheduler-do-retirement.auto.tfvars.json
-          fi
-        working-directory: ${{ env.TF_WORKING_DIR }}
-
       - name: Terraform Plan
         id: plan
         shell: bash
@@ -215,8 +173,6 @@ jobs:
         env:
           # The bundles come from the Build job. Terraform must not rebuild them,
           # and refuses any file that is not the one that job recorded.
-          TF_VAR_build_workers_in_terraform: "false"
-          TF_VAR_worker_bundle_sha256: ${{ needs.build.outputs.worker-bundle-sha256 }}
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
           TF_VAR_cloudflare_worker_subdomain: ${{ vars.CLOUDFLARE_WORKER_SUBDOMAIN || secrets.CLOUDFLARE_WORKER_SUBDOMAIN }}
@@ -271,7 +227,6 @@ jobs:
           TF_VAR_linear_api_key: ${{ secrets.LINEAR_API_KEY }}
           TF_VAR_linear_bot_default_model: "${{ vars.LINEAR_BOT_DEFAULT_MODEL || secrets.LINEAR_BOT_DEFAULT_MODEL || 'claude-sonnet-4-6' }}"
           TF_VAR_web_platform: "${{ vars.WEB_PLATFORM || secrets.WEB_PLATFORM || 'vercel' }}"
-          TF_VAR_enable_durable_object_bindings: "${{ vars.ENABLE_DURABLE_OBJECT_BINDINGS || secrets.ENABLE_DURABLE_OBJECT_BINDINGS || 'true' }}"
           TF_VAR_enable_service_bindings: "${{ vars.ENABLE_SERVICE_BINDINGS || secrets.ENABLE_SERVICE_BINDINGS || 'true' }}"
           TF_VAR_sandbox_provider: "${{ vars.SANDBOX_PROVIDER || secrets.SANDBOX_PROVIDER || 'modal' }}"
           TF_VAR_sandbox_inactivity_timeout_ms: "${{ vars.SANDBOX_INACTIVITY_TIMEOUT_MS || secrets.SANDBOX_INACTIVITY_TIMEOUT_MS || '600000' }}"
@@ -438,7 +393,7 @@ jobs:
     name: Apply
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [validate, check-secrets, build]
+    needs: [validate, check-secrets]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.check-secrets.outputs.has-secrets == 'true'
     environment: production
     steps:
@@ -454,12 +409,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Also restores packages/shared/dist, which the Vercel and OpenComputer
-      # snapshot builders import during apply.
-      - name: Download worker bundles
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ needs.build.outputs.artifact-name }}
+      # The Vercel and OpenComputer snapshot builders import it during apply.
+      - name: Build shared package
+        run: npm run build -w @open-inspect/shared
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
@@ -483,28 +435,12 @@ jobs:
             -backend-config="endpoints={s3=\"https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com\"}"
         working-directory: ${{ env.TF_WORKING_DIR }}
 
-      - name: Stage SchedulerDO deletion migration
-        run: |
-          set -euo pipefail
-          # Read state and parse it as separate steps: piping straight into jq
-          # turns a failed state read into an empty tag, which would silently
-          # skip the deletion migration and ship a worker whose class was never
-          # retired. An absent or empty state is still a valid "not v2" answer.
-          state="$(terraform state pull)"
-          current_tag="$(printf '%s' "$state" | jq -r '.resources[]? | select(.module == "module.control_plane_worker" and .type == "cloudflare_worker_version" and .name == "this") | .instances[0].attributes.migration_tag // empty')"
-          if [ "$current_tag" = "v2" ]; then
-            printf '%s\n' '{"control_plane_migration_tag":"v3","control_plane_migration_old_tag":"v2","control_plane_deleted_classes":["SchedulerDO"]}' > scheduler-do-retirement.auto.tfvars.json
-          fi
-        working-directory: ${{ env.TF_WORKING_DIR }}
-
       - name: Terraform Apply
         run: terraform apply -auto-approve
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
           # The bundles come from the Build job. Terraform must not rebuild them,
           # and refuses any file that is not the one that job recorded.
-          TF_VAR_build_workers_in_terraform: "false"
-          TF_VAR_worker_bundle_sha256: ${{ needs.build.outputs.worker-bundle-sha256 }}
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
           TF_VAR_cloudflare_worker_subdomain: ${{ vars.CLOUDFLARE_WORKER_SUBDOMAIN || secrets.CLOUDFLARE_WORKER_SUBDOMAIN }}
@@ -559,7 +495,6 @@ jobs:
           TF_VAR_linear_api_key: ${{ secrets.LINEAR_API_KEY }}
           TF_VAR_linear_bot_default_model: "${{ vars.LINEAR_BOT_DEFAULT_MODEL || secrets.LINEAR_BOT_DEFAULT_MODEL || 'claude-sonnet-4-6' }}"
           TF_VAR_web_platform: "${{ vars.WEB_PLATFORM || secrets.WEB_PLATFORM || 'vercel' }}"
-          TF_VAR_enable_durable_object_bindings: "${{ vars.ENABLE_DURABLE_OBJECT_BINDINGS || secrets.ENABLE_DURABLE_OBJECT_BINDINGS || 'true' }}"
           TF_VAR_enable_service_bindings: "${{ vars.ENABLE_SERVICE_BINDINGS || secrets.ENABLE_SERVICE_BINDINGS || 'true' }}"
           TF_VAR_sandbox_provider: "${{ vars.SANDBOX_PROVIDER || secrets.SANDBOX_PROVIDER || 'modal' }}"
           TF_VAR_sandbox_inactivity_timeout_ms: "${{ vars.SANDBOX_INACTIVITY_TIMEOUT_MS || secrets.SANDBOX_INACTIVITY_TIMEOUT_MS || '600000' }}"

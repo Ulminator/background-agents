@@ -321,10 +321,6 @@ deployment_name = ""
 # Path to project root (relative to this directory)
 project_root = "../../../"
 
-# Build the control-plane and bot Worker bundles during apply. CI builds them
-# before plan and sets this to false; keep the default for local applies.
-# build_workers_in_terraform = true
-
 # Display name shown in the web UI, bot messages (Slack, Linear), and PR body footers.
 # Also used as the outbound HTTP User-Agent header. Defaults to "Open-Inspect".
 # app_name = "Open-Inspect"
@@ -374,21 +370,15 @@ project_root = "../../../"
 # r2_media_bucket_name = ""
 
 # =============================================================================
-# Initial Deployment Flags
+# Initial Deployment Flag
 # =============================================================================
-# For first-time deployment, set both to false to avoid chicken-and-egg issues
-# with Durable Objects and service bindings.
-# After the first successful deployment, set both to true and run terraform apply again.
+# The control plane and the Slack and Linear bots bind to each other, and a
+# service binding's target must already be deployed. For a first deployment, set
+# this to false, apply, deploy, then set it back to true, apply and deploy again.
+# Durable Objects need no such step: `wrangler deploy` creates the class and
+# binds it in one upload.
 
-enable_durable_object_bindings = false
 enable_service_bindings = false
-
-# Override these only for an explicit Durable Object migration. The production
-# workflow stages the SchedulerDO v2-to-v3 deletion only when state is still v2.
-# control_plane_migration_tag = "v1"
-# control_plane_migration_old_tag = null
-# control_plane_new_sqlite_classes = []
-# control_plane_deleted_classes = []
 
 # =============================================================================
 # Access Control

@@ -19,6 +19,7 @@
     "test:lint-sandbox-boundaries": "node --test scripts/lint-sandbox-boundaries.test.mjs",
     "test:lint-sql-portability": "node --test scripts/lint-sql-portability.test.mjs",
     "test:deploy-aws": "node --test scripts/deploy-aws.test.mjs",
+    "test:deploy-cloudflare": "node --test scripts/render-wrangler-configs.test.mjs",
     "test:rbac-bootstrap-owner": "node --experimental-transform-types --test scripts/bootstrap-workspace-owner.test.ts",
     "test:user-merge-cli": "node --experimental-transform-types --test scripts/merge-split-users.test.ts",
     "test:cf-logs-cli": "node --test scripts/cf-logs.test.ts",

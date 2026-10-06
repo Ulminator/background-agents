@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "d1_database_name": "open-inspect-example",
+  "workers": {
+    "control-plane": {
+      "config_json": "{\"compatibility_date\":\"2024-09-23\",\"compatibility_flags\":[\"nodejs_compat\"],\"d1_databases\":[{\"binding\":\"DB\",\"database_id\":\"00000000-0000-0000-0000-000000000002\"}],\"durable_objects\":{\"bindings\":[{\"class_name\":\"SessionDO\",\"name\":\"SESSION\"}]},\"kv_namespaces\":[{\"binding\":\"REPOS_CACHE\",\"id\":\"00000000000000000000000000000001\"}],\"main\":\"packages/control-plane/dist/index.js\",\"name\":\"open-inspect-control-plane-example\",\"no_bundle\":true,\"observability\":{\"enabled\":true,\"head_sampling_rate\":1,\"logs\":{\"enabled\":true,\"head_sampling_rate\":1,\"invocation_logs\":true}},\"queues\":{\"consumers\":[{\"dead_letter_queue\":\"open-inspect-image-build-finalization-dlq-example\",\"max_batch_size\":1,\"max_batch_timeout\":1,\"max_concurrency\":5,\"max_retries\":12,\"queue\":\"open-inspect-image-build-finalization-example\",\"retry_delay\":15}],\"producers\":[{\"binding\":\"IMAGE_BUILD_FINALIZATION_QUEUE\",\"queue\":\"open-inspect-image-build-finalization-example\"}]},\"r2_buckets\":[{\"binding\":\"MEDIA_BUCKET\",\"bucket_name\":\"open-inspect-media-example\"}],\"services\":[{\"binding\":\"SLACK_BOT\",\"service\":\"open-inspect-slack-bot-example\"}],\"triggers\":{\"crons\":[\"* * * * *\",\"7,37 * * * *\",\"23 * * * *\"]},\"vars\":{\"APP_NAME\":\"Open-Inspect\",\"DEPLOYMENT_NAME\":\"example\",\"SANDBOX_PROVIDER\":\"modal\",\"WEB_APP_URL\":\"https://open-inspect-web-example.example.workers.dev\",\"WORKER_URL\":\"https://open-inspect-control-plane-example.example.workers.dev\"},\"workers_dev\":true}",
+      "secrets": {
+        "TOKEN_ENCRYPTION_KEY": "example-not-a-secret",
+        "SERVICE_AUTH_SECRET_SLACK_BOT": "example-not-a-secret"
+      }
+    },
+    "slack-bot": {
+      "config_json": "{\"compatibility_date\":\"2024-09-23\",\"compatibility_flags\":[\"nodejs_compat\"],\"d1_databases\":[],\"durable_objects\":{\"bindings\":[]},\"kv_namespaces\":[{\"binding\":\"SLACK_KV\",\"id\":\"00000000000000000000000000000003\"}],\"main\":\"packages/slack-bot/dist/index.js\",\"name\":\"open-inspect-slack-bot-example\",\"no_bundle\":true,\"observability\":{\"enabled\":true,\"head_sampling_rate\":1,\"logs\":{\"enabled\":true,\"head_sampling_rate\":1,\"invocation_logs\":true}},\"queues\":{\"consumers\":[{\"dead_letter_queue\":\"open-inspect-slack-completion-dlq-example\",\"max_batch_size\":1,\"max_batch_timeout\":1,\"max_concurrency\":5,\"max_retries\":1,\"queue\":\"open-inspect-slack-completion-example\",\"retry_delay\":15}],\"producers\":[{\"binding\":\"SLACK_COMPLETION_QUEUE\",\"queue\":\"open-inspect-slack-completion-example\"}]},\"r2_buckets\":[],\"services\":[{\"binding\":\"CONTROL_PLANE\",\"service\":\"open-inspect-control-plane-example\"}],\"triggers\":{\"crons\":[]},\"vars\":{\"APP_NAME\":\"Open-Inspect\",\"CONTROL_PLANE_URL\":\"https://open-inspect-control-plane-example.example.workers.dev\"},\"workers_dev\":true}",
+      "secrets": {
+        "SLACK_BOT_TOKEN": "example-not-a-secret",
+        "SERVICE_AUTH_SECRET": "example-not-a-secret"
+      }
+    },
+    "github-bot": {
+      "config_json": "{\"compatibility_date\":\"2024-09-23\",\"compatibility_flags\":[\"nodejs_compat\"],\"d1_databases\":[],\"durable_objects\":{\"bindings\":[]},\"kv_namespaces\":[{\"binding\":\"GITHUB_KV\",\"id\":\"00000000000000000000000000000004\"}],\"main\":\"packages/github-bot/dist/index.js\",\"name\":\"open-inspect-github-bot-example\",\"no_bundle\":true,\"observability\":{\"enabled\":true,\"head_sampling_rate\":1,\"logs\":{\"enabled\":true,\"head_sampling_rate\":1,\"invocation_logs\":true}},\"queues\":{\"consumers\":[],\"producers\":[{\"binding\":\"AUTOFIX_QUEUE\",\"queue\":\"open-inspect-github-autofix-example\"}]},\"r2_buckets\":[],\"services\":[{\"binding\":\"CONTROL_PLANE\",\"service\":\"open-inspect-control-plane-example\"}],\"triggers\":{\"crons\":[]},\"vars\":{\"APP_NAME\":\"Open-Inspect\"},\"workers_dev\":true}",
+      "secrets": {
+        "GITHUB_WEBHOOK_SECRET": "example-not-a-secret",
+        "SERVICE_AUTH_SECRET": "example-not-a-secret"
+      }
+    },
+    "linear-bot": {
+      "config_json": "{\"compatibility_date\":\"2024-09-23\",\"compatibility_flags\":[\"nodejs_compat\"],\"d1_databases\":[],\"durable_objects\":{\"bindings\":[]},\"kv_namespaces\":[{\"binding\":\"LINEAR_KV\",\"id\":\"00000000000000000000000000000005\"}],\"main\":\"packages/linear-bot/dist/index.js\",\"name\":\"open-inspect-linear-bot-example\",\"no_bundle\":true,\"observability\":{\"enabled\":true,\"head_sampling_rate\":1,\"logs\":{\"enabled\":true,\"head_sampling_rate\":1,\"invocation_logs\":true}},\"queues\":{\"consumers\":[],\"producers\":[]},\"r2_buckets\":[],\"services\":[{\"binding\":\"CONTROL_PLANE\",\"service\":\"open-inspect-control-plane-example\"}],\"triggers\":{\"crons\":[]},\"vars\":{\"APP_NAME\":\"Open-Inspect\"},\"workers_dev\":true}",
+      "secrets": {
+        "LINEAR_WEBHOOK_SECRET": "example-not-a-secret",
+        "SERVICE_AUTH_SECRET": "example-not-a-secret"
+      }
+    }
+  },
+  "web": {
+    "config_json": "{\"assets\":{\"binding\":\"ASSETS\",\"directory\":\".open-next/assets\"},\"compatibility_date\":\"2025-08-15\",\"compatibility_flags\":[\"nodejs_compat\",\"global_fetch_strictly_public\"],\"keep_names\":false,\"main\":\".open-next/worker.js\",\"name\":\"open-inspect-web-example\",\"routes\":[],\"services\":[{\"binding\":\"CONTROL_PLANE_WORKER\",\"service\":\"open-inspect-control-plane-example\"}],\"vars\":{\"CONTROL_PLANE_URL\":\"https://open-inspect-control-plane-example.example.workers.dev\",\"NEXT_PUBLIC_APP_ICON_URL\":\"\",\"NEXT_PUBLIC_APP_NAME\":\"Open-Inspect\",\"NEXT_PUBLIC_SANDBOX_PROVIDER\":\"modal\",\"NEXT_PUBLIC_WS_URL\":\"wss://open-inspect-control-plane-example.example.workers.dev\"},\"workers_dev\":true}",
+    "build_env": {
+      "NEXT_PUBLIC_WS_URL": "wss://open-inspect-control-plane-example.example.workers.dev",
+      "NEXT_PUBLIC_SANDBOX_PROVIDER": "modal",
+      "NEXT_PUBLIC_APP_NAME": "Open Inspect (example)",
+      "NEXT_PUBLIC_APP_ICON_URL": ""
+    },
+    "secrets": {
+      "SERVICE_AUTH_SECRET": "example-not-a-secret"
+    }
+  }
+}

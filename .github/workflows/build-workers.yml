@@ -1,25 +1,28 @@
-# Builds the control-plane and bot Worker bundles once per run, so Terraform
-# deploys these files instead of rebuilding them during apply
-# (build_workers_in_terraform = false).
+# Builds the control-plane and bot Worker bundles once per run, for
+# deploy-cloudflare.yml to ship with `wrangler deploy`.
 #
 # Download the artifact named by the `artifact-name` output into the workspace
-# root. It holds each packages/<package>/dist/index.js, packages/shared/dist
-# (imported by apply-time snapshot builders) and worker-bundles.json, the
-# bundles' SHA-256s. The `worker-bundle-sha256` output is the same JSON, for
-# TF_VAR_worker_bundle_sha256: Terraform rejects a bundle that doesn't match.
+# root. It holds each packages/<package>/dist/index.js and worker-bundles.json,
+# the bundles' SHA-256s. The deploy job checks every bundle against it before
+# deploying, so it ships exactly what was built here.
 #
-# The Cloudflare web app is still built during apply, because its bundle
-# inlines NEXT_PUBLIC_* values that Terraform derives.
+# The Cloudflare web app is built in the deploy job, because its bundle inlines
+# NEXT_PUBLIC_* values from Terraform's deploy manifest.
 name: Build Workers
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: "Commit to build. Defaults to the commit that triggered the run."
+        type: string
+        default: ""
     outputs:
       artifact-name:
         description: "Actions artifact holding the bundles and worker-bundles.json"
         value: ${{ jobs.build.outputs.artifact-name }}
       worker-bundle-sha256:
-        description: "JSON map of package directory to bundle SHA-256, the shape worker_bundle_sha256 takes"
+        description: "JSON map of package directory to bundle SHA-256, as in worker-bundles.json"
         value: ${{ jobs.build.outputs.worker-bundle-sha256 }}
 
 permissions:
@@ -37,6 +40,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -61,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           sha256() { sha256sum "packages/$1/dist/index.js" | cut -d' ' -f1; }
-          # Keyed by package directory, the keys worker_bundle_sha256 accepts.
+          # Keyed by package directory, as the deploy manifest keys Workers.
           jq -n \
             --arg control-plane "$(sha256 control-plane)" \
             --arg slack-bot "$(sha256 slack-bot)" \
@@ -76,14 +80,11 @@ jobs:
         with:
           name: worker-bundles
           # Uploaded from the workspace root so a download restores each file
-          # at the path Terraform reads it from. packages/shared/dist is not
-          # deployed; the Vercel and OpenComputer snapshot builders import it
-          # during apply, so they reuse this build.
+          # at the path the deploy manifest names.
           path: |
             worker-bundles.json
             packages/control-plane/dist/index.js
             packages/slack-bot/dist/index.js
             packages/github-bot/dist/index.js
             packages/linear-bot/dist/index.js
-            packages/shared/dist/
           if-no-files-found: error

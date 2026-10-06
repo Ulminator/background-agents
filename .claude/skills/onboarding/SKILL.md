@@ -230,9 +230,8 @@ endpoints = {
 Create `terraform/environments/production/terraform.tfvars` with all collected values. Set:
 
 ```hcl
-web_platform                   = "{vercel_or_cloudflare_from_phase_1}"
-enable_durable_object_bindings = false
-enable_service_bindings        = false
+web_platform            = "{vercel_or_cloudflare_from_phase_1}"
+enable_service_bindings = false
 ```
 
 If Phase 1 selected a Cloudflare custom domain, also set `cloudflare_custom_domain` and
@@ -256,27 +255,31 @@ github_webhook_secret = "{generated_value}"
 github_bot_username   = "{app-slug}[bot]"
 ```
 
-## Phase 8: Terraform Deployment (Two-Phase)
+## Phase 8: Provision and Deploy (Twice)
 
-**Important**: Build the workers before running Terraform (Terraform references the built bundles):
+Terraform provisions; `scripts/deploy-cloudflare.sh` deploys the code. The control plane and the
+Slack and Linear bots bind to each other, so the first deployment runs both steps twice.
 
-```bash
-npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot
-```
-
-**Phase 1** (bindings disabled):
+**First pass** (`enable_service_bindings = false`):
 
 ```bash
 cd terraform/environments/production
 terraform init -backend-config=backend.tfvars
 terraform apply
+cd ../../..
+npm run build -w @open-inspect/shared
+npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot -w @open-inspect/linear-bot
+manifest="$(mktemp)"
+terraform -chdir=terraform/environments/production output -json deploy_manifest > "$manifest"
+bash scripts/deploy-cloudflare.sh "$manifest"
+rm "$manifest"
 ```
 
-**Phase 2** (after Phase 1 succeeds): Update tfvars to set both bindings to `true`, then:
+The deploy needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the environment, and the
+manifest holds every Worker secret, so never log or keep it.
 
-```bash
-terraform apply
-```
+**Second pass**: set `enable_service_bindings = true` in tfvars, then run `terraform apply` and the
+deploy commands again.
 
 ## Phase 9: Complete Slack Setup (If Enabled)
 
@@ -350,8 +353,8 @@ terraform.tfvars.
 
 ## Phase 11: Web App Deployment
 
-For the Cloudflare choice from Phase 1, Terraform deploys the web app; no manual step is needed. For
-Vercel, deploy from the repository root:
+For the Cloudflare choice from Phase 1, `scripts/deploy-cloudflare.sh` deploys the web app; no
+manual step is needed. For Vercel, deploy from the repository root:
 
 ```bash
 npx vercel link --project open-inspect-{deployment_name}
@@ -387,7 +390,8 @@ mode and allowlists. CI uses the same `open-inspect-terraform-state` R2 bucket a
 ## Error Handling
 
 - **"redirect_uri is not associated"**: Callback URL mismatch - update GitHub App settings
-- **Durable Object errors**: Must follow two-phase deployment
+- **Service binding errors on a first deployment**: Run the first pass with
+  `enable_service_bindings = false`
 - **"At least one access control allowlist must be configured"**: Set an appropriate `allowed_*`
   Terraform value or the explicit Phase 1 open-access choice; check Step 5 of
   `docs/GETTING_STARTED.md` and the corresponding CI variables/secrets.
@@ -398,8 +402,8 @@ mode and allowlists. CI uses the same `open-inspect-terraform-state` R2 bucket a
 - **GitHub bot not responding**: Check webhook URL, secret, `enable_github_bot = true`, and
   `github_bot_username` matches the App's bot login
 - **Vercel build fails**: Terraform configures the monorepo build commands automatically
-- **"no such file or directory" for dist/index.js**: Build workers before Terraform:
-  `npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot`
+- **"no such file or directory" for dist/index.js**: Build the Workers before deploying:
+  `npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot -w @open-inspect/linear-bot`
 - **Worker deployment fails**: Build shared package first: `npm run build -w @open-inspect/shared`
 
 ## Important Notes
@@ -407,4 +411,4 @@ mode and allowlists. CI uses the same `open-inspect-terraform-state` R2 bucket a
 - Track all collected credentials securely throughout the process
 - Never log sensitive values
 - The callback URL MUST match the actual deployed web app URL
-- Two-phase Terraform deployment is required due to Cloudflare Durable Object constraints
+- A first deployment applies and deploys twice, because of the cyclic service bindings

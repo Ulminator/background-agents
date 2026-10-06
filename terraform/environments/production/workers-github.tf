@@ -16,21 +16,6 @@ resource "cloudflare_queue" "github_autofix_dlq" {
   queue_name = "open-inspect-github-autofix-dlq-${local.name_suffix}"
 }
 
-# Build github-bot worker bundle (only runs during apply, not plan).
-# Skipped when the bundle is built before plan (build_workers_in_terraform = false).
-resource "null_resource" "github_bot_build" {
-  count = var.enable_github_bot && var.build_workers_in_terraform ? 1 : 0
-
-  triggers = {
-    always_run = timestamp()
-  }
-
-  provisioner "local-exec" {
-    command     = "npm run build"
-    working_dir = "${var.project_root}/packages/github-bot"
-  }
-}
-
 module "github_bot_worker" {
   count  = var.enable_github_bot ? 1 : 0
   source = "../../modules/cloudflare-worker"
@@ -38,8 +23,7 @@ module "github_bot_worker" {
   account_id       = var.cloudflare_account_id
   worker_name      = "open-inspect-github-bot-${local.name_suffix}"
   worker_subdomain = var.cloudflare_worker_subdomain
-  script_path      = local.github_bot_script_path
-  script_sha256    = lookup(var.worker_bundle_sha256, "github-bot", null)
+  bundle_path      = local.github_bot_bundle_path
 
   kv_namespaces = {
     GITHUB_KV = {
@@ -78,25 +62,4 @@ module "github_bot_worker" {
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]
-
-  depends_on = [null_resource.github_bot_build[0], module.control_plane_worker, module.github_kv[0]]
-}
-
-resource "cloudflare_queue_consumer" "github_autofix" {
-  count = var.enable_github_bot ? 1 : 0
-
-  account_id        = var.cloudflare_account_id
-  queue_id          = cloudflare_queue.github_autofix[0].queue_id
-  type              = "worker"
-  script_name       = module.control_plane_worker.worker_name
-  dead_letter_queue = cloudflare_queue.github_autofix_dlq[0].queue_name
-  settings = {
-    batch_size       = 1
-    max_wait_time_ms = 1000
-    max_concurrency  = 5
-    max_retries      = 4
-    retry_delay      = 30
-  }
-
-  depends_on = [module.github_bot_worker, module.control_plane_worker]
 }

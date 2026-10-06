@@ -40,16 +40,8 @@ test("Classifier-only Anthropic key reaches Terraform plan and apply", () => {
 });
 
 // Inputs the workflow deliberately does not take from the environment:
-// control_plane_* values are staged per migration (the "Stage SchedulerDO
-// deletion migration" step writes them to an auto.tfvars.json file), and
 // project_root is a path inside the checkout.
-const NOT_FROM_ENVIRONMENT = new Set([
-  "control_plane_migration_tag",
-  "control_plane_migration_old_tag",
-  "control_plane_new_sqlite_classes",
-  "control_plane_deleted_classes",
-  "project_root",
-]);
+const NOT_FROM_ENVIRONMENT = new Set(["project_root"]);
 
 test("Every production Terraform variable reaches plan and apply", async () => {
   const variables = await readFile(
