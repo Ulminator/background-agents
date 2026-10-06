@@ -175,24 +175,42 @@ terraform plan
 terraform apply
 ```
 
+`terraform apply` provisions infrastructure only. Code reaches the Workers through the
+`Deploy (Cloudflare)` workflow (see [Deploying code](#deploying-code)), which you can also run by
+hand with `workflow_dispatch`.
+
 ## CI/CD Pipeline
 
-The GitHub Actions workflow (`.github/workflows/terraform.yml`) automates:
+Two workflows split the work. Terraform provisions; Wrangler ships code.
 
-| Trigger       | Action                           |
-| ------------- | -------------------------------- |
-| Pull Request  | `terraform plan` with PR comment |
-| Merge to main | `terraform apply` (auto-approve) |
+| Workflow                | Trigger                                   | Action                                      |
+| ----------------------- | ----------------------------------------- | ------------------------------------------- |
+| `terraform.yml`         | Pull request touching `terraform/**`      | `terraform plan` with PR comment            |
+| `terraform.yml`         | Merge to main touching `terraform/**`     | `terraform apply` (auto-approve)            |
+| `deploy-cloudflare.yml` | Pull request touching Worker or web code  | `wrangler deploy --dry-run` for each Worker |
+| `deploy-cloudflare.yml` | Merge to main touching code, or any apply | Build, D1 migrations, `wrangler deploy`     |
 
-### Worker bundles
+### Deploying code
 
-CI builds the control-plane and bot Worker bundles once per run
-(`.github/workflows/build-workers.yml`) and hands them to plan or apply as an artifact. Those jobs
-set `build_workers_in_terraform = false`, so Terraform deploys the downloaded files instead of
-rebuilding them during apply, and `worker_bundle_sha256`, so a file that is not the one the build
-recorded fails the plan. A local `terraform apply` still builds them: the variable defaults to
-`true`. The Cloudflare web app is still built during apply, because its bundle inlines
-per-deployment `NEXT_PUBLIC_*` values.
+Terraform creates the Cloudflare resources and empty Workers, then publishes everything a deploy
+needs as the sensitive `deploy_manifest` output: each Worker's Wrangler config (vars and bindings),
+its secrets, the web app's config and build environment, and the D1 database name. Worker settings
+still live in Terraform variables; an apply refreshes the manifest, and the deploy that follows
+every apply ships it.
+
+`deploy-cloudflare.yml` then:
+
+1. builds the Worker bundles once (`.github/workflows/build-workers.yml`) and checks each against
+   its recorded SHA-256;
+2. reads the manifest with `terraform output -json deploy_manifest` (state only: no plan or apply);
+3. renders one Wrangler config per Worker with `scripts/render-wrangler-configs.mjs`;
+4. applies D1 migrations;
+5. deploys the control plane, then the bots, with `wrangler deploy --secrets-file`, so code and
+   secrets ship as one version;
+6. builds the web app with the manifest's `NEXT_PUBLIC_*` values and deploys it.
+
+A code-only change never runs Terraform. A change that also needs new infrastructure, such as a new
+queue, waits for its apply and is deployed after it.
 
 ### GitHub Actions Secrets and Variables
 
@@ -306,8 +324,7 @@ ALLOWED_USERS
 ALLOWED_EMAIL_DOMAINS
 UNSAFE_ALLOW_ALL_USERS # Optional; defaults to false
 
-# Two-phase first deployment (see "Durable Objects" below)
-ENABLE_DURABLE_OBJECT_BINDINGS # Optional; defaults to true
+# First deployment (see "Durable Objects and service bindings" below)
 ENABLE_SERVICE_BINDINGS # Optional; defaults to true
 
 # Branding
@@ -331,29 +348,25 @@ The other sandbox providers are wired in the same [production directory](environ
 
 ## Important Notes
 
-### Durable Objects
+### Durable Objects and service bindings
 
-Durable Object migrations are applied with deployments. This means you can't bind to a Durable
-Object in a Version if a deployment doesn't exist (i.e., migrations haven't been applied).
+`wrangler deploy` creates a Durable Object class and binds it in one upload, so Durable Objects need
+no first-deployment step.
 
-**First-time deployment with Durable Objects and service bindings:**
+Migrations live in `CONTROL_PLANE_MIGRATIONS` in `scripts/render-wrangler-configs.mjs`. Wrangler
+applies only the steps after the Worker's live migration tag, and the deploy workflow reads that tag
+from Cloudflare before rendering. To add or remove a class, append a step with a new tag; a removed
+class needs a `deleted_classes` step and its binding removed from `workers-control-plane.tf`.
 
-Use the built-in two-phase flags instead of editing Terraform modules:
+Service bindings still need a first-deployment step: the control plane and the Slack and Linear bots
+bind to each other, and a binding's target must already be deployed. For a first deployment:
 
-1. Set `enable_durable_object_bindings = false` and `enable_service_bindings = false`.
-2. Run `terraform apply` to create the initial workers and migrations.
-3. Set both values back to `true`.
-4. Run `terraform apply` again to attach the Durable Object and service bindings.
-
-Class removal does not disable surviving bindings. Remove the retired binding, set a new migration
-tag and previous tag, list the class in `control_plane_deleted_classes`, and apply with
-`enable_durable_object_bindings = true`. The migration and surviving bindings are emitted together.
-The production workflow stages the `SchedulerDO` v2-to-v3 deletion only when Terraform state still
-reports v2, so the release-specific migration is not a permanent default for fresh deployments.
+1. Set `enable_service_bindings = false`, apply, and let the deploy run.
+2. Set it back to `true`, apply, and let the deploy run again.
 
 See
 [Cloudflare's documentation](https://developers.cloudflare.com/workers/platform/infrastructure-as-code/)
-for details.
+for why Durable Object Workers deploy code with Wrangler.
 
 ### State Management
 
@@ -427,11 +440,10 @@ variables.
 
 ### Worker deployment fails
 
-1. Build workers first: `npm run build -w @open-inspect/control-plane`
-2. Check script exists: `ls packages/control-plane/dist/index.js`
-   - A plan that fails with "does not match script_sha256" found a bundle other than the one
-     `worker_bundle_sha256` names: re-download or rebuild it, or unset the variable for a local
-     build.
+1. Check the deploy workflow's "Verify bundle checksums" step: a mismatch means the downloaded
+   bundle is not the one the Build job recorded.
+2. Check the manifest exists: `terraform output -json deploy_manifest` must succeed. A new
+   deployment needs one `terraform apply` before its first deploy.
 3. Verify Cloudflare API token permissions:
    - `Workers Scripts: Edit`
    - `Workers KV Storage: Edit`

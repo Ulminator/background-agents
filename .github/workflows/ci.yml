@@ -124,6 +124,9 @@ jobs:
       - name: Test AWS deploy rollback
         run: npm run test:deploy-aws
 
+      - name: Test Cloudflare deploy config rendering
+        run: npm run test:deploy-cloudflare
+
       - name: Test Owner bootstrap CLI
         run: npm run test:rbac-bootstrap-owner
 

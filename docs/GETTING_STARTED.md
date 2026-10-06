@@ -506,9 +506,8 @@ project_root    = "../../../"
 # Leave empty to keep the built-in favicon and default in-app icon.
 # app_icon_url = ""
 
-# Initial deployment: set both to false (see Step 6)
-enable_durable_object_bindings = false
-enable_service_bindings        = false
+# Initial deployment: set to false (see Step 6)
+enable_service_bindings = false
 
 # Access Control (set at least one allowlist for production). A user is admitted
 # if they match ANY allowlist below.
@@ -566,26 +565,19 @@ The core path uses GitHub sign-in. To add or switch to Google, see
 
 ## Step 6: Deploy with Terraform
 
-Deployment requires **two phases** due to Cloudflare's Durable Object and service binding
-requirements.
+Terraform provisions the infrastructure; Wrangler deploys the code. A first deployment does both
+**twice**, because the control plane and the Slack and Linear bots bind to each other and a service
+binding's target must already be deployed.
 
-### Phase 1: Initial Deployment
+### Phase 1: Provision and deploy without service bindings
 
 Ensure your `terraform.tfvars` has:
 
 ```hcl
-enable_durable_object_bindings = false
-enable_service_bindings        = false
+enable_service_bindings = false
 ```
 
-**Important**: Build the workers before running Terraform (Terraform references the built bundles):
-
-```bash
-# From the repository root
-npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot -w @open-inspect/linear-bot
-```
-
-Then run:
+Provision:
 
 ```bash
 cd terraform/environments/production
@@ -593,26 +585,30 @@ cd terraform/environments/production
 # Initialize Terraform with backend config
 terraform init -backend-config=backend.tfvars
 
-# Deploy (phase 1 - creates workers without bindings)
 terraform apply
 ```
 
-### Phase 2: Enable Bindings
-
-After Phase 1 succeeds, update your `terraform.tfvars`:
-
-```hcl
-enable_durable_object_bindings = true
-enable_service_bindings        = true
-```
-
-Then run:
+Then build the Workers and deploy them from the repository root. The manifest holds every Worker
+secret, so it goes to a temporary file that is deleted afterwards:
 
 ```bash
-terraform apply
+cd ../../..
+npm run build -w @open-inspect/shared
+npm run build -w @open-inspect/control-plane -w @open-inspect/slack-bot -w @open-inspect/github-bot -w @open-inspect/linear-bot
+
+manifest="$(mktemp)"
+terraform -chdir=terraform/environments/production output -json deploy_manifest > "$manifest"
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... bash scripts/deploy-cloudflare.sh "$manifest"
+rm "$manifest"
 ```
 
-Terraform will update the workers with the required bindings.
+`scripts/deploy-cloudflare.sh` applies D1 migrations, deploys each Worker with its secrets, and
+builds and deploys the Cloudflare web app.
+
+### Phase 2: Enable service bindings
+
+Set `enable_service_bindings = true` in `terraform.tfvars`, run `terraform apply`, and run the
+deploy commands again.
 
 ---
 
@@ -620,8 +616,8 @@ Terraform will update the workers with the required bindings.
 
 ### If using Cloudflare (`web_platform = "cloudflare"`)
 
-Terraform handles the full build and deploy automatically — the web app is built with OpenNext and
-deployed as a Cloudflare Worker during `terraform apply`. No manual step needed.
+`scripts/deploy-cloudflare.sh` (Step 6) builds the web app with OpenNext, using the URLs from
+Terraform's deploy manifest, and deploys it as a Cloudflare Worker. No separate step is needed.
 
 To serve the web app on your own hostname, see
 [Custom Domain for the Web App (Optional)](#custom-domain-for-the-web-app-optional).
@@ -1247,7 +1243,6 @@ R2_MEDIA_LOCATION
 R2_MEDIA_BUCKET_NAME
 SANDBOX_INACTIVITY_TIMEOUT_MS
 SANDBOX_BOOT_TIMEOUT_MS
-ENABLE_DURABLE_OBJECT_BINDINGS
 ENABLE_SERVICE_BINDINGS
 
 # Vercel web app
@@ -1403,8 +1398,7 @@ Secrets for credentials:
 | `ALLOWED_EMAILS`                   | Comma-separated exact email addresses (for individual users on shared domains)                  |
 | `ALLOWED_GITHUB_ORGS`              | Comma-separated GitHub orgs whose active members can sign in                                    |
 | `UNSAFE_ALLOW_ALL_USERS`           | `true` to allow any authenticated user when every allowlist is empty (defaults to `false`)      |
-| `ENABLE_DURABLE_OBJECT_BINDINGS`   | Optional Terraform CI flag for Durable Object phase 1 (defaults to `true`)                      |
-| `ENABLE_SERVICE_BINDINGS`          | Optional Terraform CI flag for service-binding phase 1 (defaults to `true`)                     |
+| `ENABLE_SERVICE_BINDINGS`          | Optional flag for a first deployment's service-binding phase (defaults to `true`)               |
 | `ENABLE_GITHUB_BOT`                | `true` to deploy GitHub bot worker (or empty to skip)                                           |
 | `GH_WEBHOOK_SECRET`                | GitHub webhook secret (required if GitHub bot enabled)                                          |
 | `GH_BOT_USERNAME`                  | GitHub App bot username, e.g., `my-app[bot]` (required if GitHub bot enabled)                   |
@@ -1689,12 +1683,12 @@ will reject it. **Fix**: Remove the `vercel_api_token` and `vercel_team_id` line
 validation. This is a known Terraform limitation (providers validate credentials on init regardless
 of whether any resources use them).
 
-### Durable Objects / Service Binding errors
+### Service binding errors
 
-This occurs on first deployment. Follow the two-phase deployment process:
+These occur on a first deployment, when a Worker binds to another that has not been deployed yet:
 
-1. Deploy with `enable_durable_object_bindings = false` and `enable_service_bindings = false`
-2. After success, set both to `true` and run `terraform apply` again
+1. Apply and deploy with `enable_service_bindings = false`
+2. After success, set it to `true`, then apply and deploy again
 
 ---
 

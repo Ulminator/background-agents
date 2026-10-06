@@ -1,0 +1,235 @@
+# Ships code to Cloudflare with Wrangler. Terraform (terraform.yml) provisions
+# the infrastructure and publishes a deploy manifest; this workflow reads it and
+# deploys, in order:
+#
+#   build-workers.yml bundles -> Wrangler configs rendered from the manifest
+#   -> D1 migrations -> control plane -> bots -> web app
+#
+# It runs on code changes, and after every successful Terraform apply on main so
+# that settings Terraform holds (vars, secrets, bindings) reach the Workers. A
+# push that also changes terraform/** waits for that apply instead of racing it.
+#
+# Pull requests get a dry run: Wrangler compiles each Worker against configs
+# rendered from scripts/fixtures/deploy-manifest.example.json, so no
+# credentials are needed.
+name: Deploy (Cloudflare)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/control-plane/**"
+      - "packages/slack-bot/**"
+      - "packages/github-bot/**"
+      - "packages/linear-bot/**"
+      - "packages/shared/**"
+      - "packages/web/**"
+      - "scripts/render-wrangler-configs.mjs"
+      - "scripts/deploy-cloudflare.sh"
+      - "scripts/fixtures/deploy-manifest.example.json"
+      - "scripts/d1-migrate.sh"
+      - "scripts/wrangler-secrets.sh"
+      - ".github/workflows/deploy-cloudflare.yml"
+      - ".github/workflows/build-workers.yml"
+      - ".nvmrc"
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/control-plane/**"
+      - "packages/slack-bot/**"
+      - "packages/github-bot/**"
+      - "packages/linear-bot/**"
+      - "packages/shared/**"
+      - "packages/web/**"
+      - "scripts/render-wrangler-configs.mjs"
+      - "scripts/deploy-cloudflare.sh"
+      - "scripts/fixtures/deploy-manifest.example.json"
+      - "scripts/d1-migrate.sh"
+      - "scripts/wrangler-secrets.sh"
+      - ".github/workflows/deploy-cloudflare.yml"
+      - ".github/workflows/build-workers.yml"
+      - ".nvmrc"
+  workflow_run:
+    workflows: [Terraform]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-cloudflare-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false # Never stop a deploy halfway
+
+env:
+  TF_VERSION: "1.14.8"
+  TF_WORKING_DIR: terraform/environments/production
+
+jobs:
+  decide:
+    name: Decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+      ref: ${{ steps.decide.outputs.ref }}
+    steps:
+      - name: Choose deploy, dry run or skip
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          HAS_SECRETS: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' }}
+        run: |
+          set -euo pipefail
+          mode=skip
+          ref="$AFTER"
+          case "$EVENT" in
+            pull_request)
+              mode=dry-run
+              ;;
+            workflow_dispatch)
+              mode=deploy
+              ;;
+            workflow_run)
+              # Only after an apply succeeded on main; Terraform's PR runs apply nothing.
+              if [ "$RUN_CONCLUSION" = success ] && [ "$RUN_EVENT" != pull_request ]; then
+                mode=deploy
+                ref="$RUN_SHA"
+              fi
+              ;;
+            push)
+              # A push that also changes terraform/** is deployed once its apply finishes.
+              if [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+                mode=deploy
+              elif changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER" --jq '.files[].filename')"; then
+                if ! grep -q '^terraform/' <<<"$changed"; then
+                  mode=deploy
+                fi
+              else
+                echo "::error::Could not list the files this push changed."
+                exit 1
+              fi
+              ;;
+          esac
+          if [ "$mode" = deploy ] && [ "$HAS_SECRETS" != true ]; then
+            echo "::notice::Deploy skipped - Cloudflare or Terraform state secrets not configured."
+            mode=skip
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: [decide]
+    if: needs.decide.outputs.mode != 'skip'
+    uses: ./.github/workflows/build-workers.yml
+    with:
+      ref: ${{ needs.decide.outputs.ref }}
+
+  dry-run:
+    name: Dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [decide, build]
+    if: needs.decide.outputs.mode == 'dry-run'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download worker bundles
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+
+      - name: Render Wrangler configs from the example manifest
+        run: node scripts/render-wrangler-configs.mjs scripts/fixtures/deploy-manifest.example.json "$RUNNER_TEMP/wrangler"
+
+      - name: Compile each Worker without deploying
+        run: |
+          set -euo pipefail
+          for pkg in control-plane slack-bot github-bot linear-bot; do
+            config="$RUNNER_TEMP/wrangler/$pkg/wrangler.json"
+            [ -f "$config" ] || continue
+            echo "::group::$pkg"
+            npx wrangler deploy --dry-run --config "$config"
+            echo "::endgroup::"
+          done
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [decide, build]
+    if: needs.decide.outputs.mode == 'deploy'
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.decide.outputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download worker bundles
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+
+      # Ship exactly the bytes the Build job produced.
+      - name: Verify bundle checksums
+        run: jq -r 'to_entries[] | "\(.value)  packages/\(.key)/dist/index.js"' worker-bundles.json | sha256sum --check --strict
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # Reads state only: no plan, no apply, no TF_VAR_* inputs. The manifest
+      # holds secrets, so it stays outside the checkout.
+      - name: Read the deploy manifest
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false \
+            -backend-config="access_key=${{ secrets.R2_ACCESS_KEY_ID }}" \
+            -backend-config="secret_key=${{ secrets.R2_SECRET_ACCESS_KEY }}" \
+            -backend-config="endpoints={s3=\"https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com\"}" >/dev/null
+          umask 077
+          terraform output -json deploy_manifest > "$RUNNER_TEMP/deploy-manifest.json"
+
+      - name: Deploy
+        run: bash scripts/deploy-cloudflare.sh "$RUNNER_TEMP/deploy-manifest.json"
+
+      - name: Remove the manifest
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy-manifest.json"

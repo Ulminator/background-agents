@@ -16,23 +16,6 @@ resource "cloudflare_queue" "slack_completion_delivery_dlq" {
   queue_name = "open-inspect-slack-completion-dlq-${local.name_suffix}"
 }
 
-# Build slack-bot worker bundle (only runs during apply, not plan).
-# Skipped when the bundle is built before plan (build_workers_in_terraform = false).
-resource "null_resource" "slack_bot_build" {
-  count = var.enable_slack_bot && var.build_workers_in_terraform ? 1 : 0
-
-  triggers = {
-    # Rebuild when source files change - use timestamp to always check
-    # In CI, this ensures fresh builds; locally, npm handles caching
-    always_run = timestamp()
-  }
-
-  provisioner "local-exec" {
-    command     = "npm run build"
-    working_dir = "${var.project_root}/packages/slack-bot"
-  }
-}
-
 module "slack_bot_worker" {
   count  = var.enable_slack_bot ? 1 : 0
   source = "../../modules/cloudflare-worker"
@@ -40,8 +23,7 @@ module "slack_bot_worker" {
   account_id       = var.cloudflare_account_id
   worker_name      = "open-inspect-slack-bot-${local.name_suffix}"
   worker_subdomain = var.cloudflare_worker_subdomain
-  script_path      = local.slack_bot_script_path
-  script_sha256    = lookup(var.worker_bundle_sha256, "slack-bot", null)
+  bundle_path      = local.slack_bot_bundle_path
 
   kv_namespaces = {
     SLACK_KV = {
@@ -60,6 +42,18 @@ module "slack_bot_worker" {
   queue_bindings = {
     SLACK_COMPLETION_QUEUE = {
       queue_name = cloudflare_queue.slack_completion_delivery[0].queue_name
+    }
+  }
+
+  # The bot both produces and consumes completion deliveries.
+  queue_consumers = {
+    (cloudflare_queue.slack_completion_delivery[0].queue_name) = {
+      dead_letter_queue         = cloudflare_queue.slack_completion_delivery_dlq[0].queue_name
+      max_batch_size            = 1
+      max_batch_timeout_seconds = 1
+      max_concurrency           = 5
+      max_retries               = 1
+      retry_delay_seconds       = 15
     }
   }
 
@@ -86,25 +80,4 @@ module "slack_bot_worker" {
 
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]
-
-  depends_on = [null_resource.slack_bot_build[0], module.slack_kv[0]]
-}
-
-resource "cloudflare_queue_consumer" "slack_completion_delivery" {
-  count = var.enable_slack_bot ? 1 : 0
-
-  account_id        = var.cloudflare_account_id
-  queue_id          = cloudflare_queue.slack_completion_delivery[0].queue_id
-  type              = "worker"
-  script_name       = module.slack_bot_worker[0].worker_name
-  dead_letter_queue = cloudflare_queue.slack_completion_delivery_dlq[0].queue_name
-  settings = {
-    batch_size       = 1
-    max_wait_time_ms = 1000
-    max_concurrency  = 5
-    max_retries      = 1
-    retry_delay      = 15
-  }
-
-  depends_on = [module.slack_bot_worker]
 }

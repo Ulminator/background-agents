@@ -12,31 +12,13 @@ resource "cloudflare_queue" "image_build_finalization_dlq" {
   queue_name = "open-inspect-image-build-finalization-dlq-${local.name_suffix}"
 }
 
-# Build control-plane worker bundle (only runs during apply, not plan).
-# Skipped when the bundle is built before plan (build_workers_in_terraform = false).
-resource "null_resource" "control_plane_build" {
-  count = var.build_workers_in_terraform ? 1 : 0
-
-  triggers = {
-    # Rebuild when source files change - use timestamp to always check
-    # In CI, this ensures fresh builds; locally, npm handles caching
-    always_run = timestamp()
-  }
-
-  provisioner "local-exec" {
-    command     = "npm run build"
-    working_dir = "${var.project_root}/packages/control-plane"
-  }
-}
-
 module "control_plane_worker" {
   source = "../../modules/cloudflare-worker"
 
   account_id       = var.cloudflare_account_id
   worker_name      = "open-inspect-control-plane-${local.name_suffix}"
   worker_subdomain = var.cloudflare_worker_subdomain
-  script_path      = local.control_plane_script_path
-  script_sha256    = lookup(var.worker_bundle_sha256, "control-plane", null)
+  bundle_path      = local.control_plane_bundle_path
 
   kv_namespaces = {
     REPOS_CACHE = {
@@ -231,46 +213,35 @@ module "control_plane_worker" {
     SESSION = { class_name = "SessionDO" }
   }
 
-  enable_durable_object_bindings = var.enable_durable_object_bindings
-
   compatibility_date  = "2024-09-23"
   compatibility_flags = ["nodejs_compat"]
-  migration_tag       = var.control_plane_migration_tag
-  migration_old_tag   = var.control_plane_migration_old_tag
-  new_sqlite_classes  = var.control_plane_new_sqlite_classes
-  deleted_classes     = var.control_plane_deleted_classes
 
   # The image-build schedule must match IMAGE_BUILD_SCHEDULER_CRON in scheduler.ts,
   # and the draft sweep ABANDONED_DRAFT_SWEEP_CRON in abandoned-draft-sweep.ts.
   cron_triggers = ["* * * * *", "7,37 * * * *", "23 * * * *"]
 
-  # Base artifacts are verified before the Worker switches its provider references.
-  depends_on = [
-    null_resource.control_plane_build,
-    module.session_index_kv,
-    null_resource.d1_migrations,
-    module.linear_bot_worker,
-    module.daytona_infra,
-    module.e2b_infra,
-    module.vercel_sandbox_infra,
-    module.opencomputer_infra,
-    module.modal_app,
-  ]
-}
-
-resource "cloudflare_queue_consumer" "image_build_finalization" {
-  account_id        = var.cloudflare_account_id
-  queue_id          = cloudflare_queue.image_build_finalization.queue_id
-  type              = "worker"
-  script_name       = module.control_plane_worker.worker_name
-  dead_letter_queue = cloudflare_queue.image_build_finalization_dlq.queue_name
-  settings = {
-    batch_size       = 1
-    max_wait_time_ms = 1000
-    max_concurrency  = 5
-    max_retries      = 12
-    retry_delay      = 15
-  }
-
-  depends_on = [module.control_plane_worker]
+  # Queues the control plane consumes. The GitHub bot produces the autofix
+  # queue; the control plane works it.
+  queue_consumers = merge(
+    {
+      (cloudflare_queue.image_build_finalization.queue_name) = {
+        dead_letter_queue         = cloudflare_queue.image_build_finalization_dlq.queue_name
+        max_batch_size            = 1
+        max_batch_timeout_seconds = 1
+        max_concurrency           = 5
+        max_retries               = 12
+        retry_delay_seconds       = 15
+      }
+    },
+    var.enable_github_bot ? {
+      (cloudflare_queue.github_autofix[0].queue_name) = {
+        dead_letter_queue         = cloudflare_queue.github_autofix_dlq[0].queue_name
+        max_batch_size            = 1
+        max_batch_timeout_seconds = 1
+        max_concurrency           = 5
+        max_retries               = 4
+        retry_delay_seconds       = 30
+      }
+    } : {}
+  )
 }

@@ -2,7 +2,7 @@
 # See: https://opennext.js.org/cloudflare
 #
 # The name follows the convention: open-inspect-web-<deployment_name>
-# In production, Terraform generates a separate `wrangler.production.toml`.
+# In production, scripts/deploy-cloudflare.sh renders the config from Terraform's deploy manifest.
 # For local dev, change the suffix below to match your deployment_name.
 
 name = "open-inspect-web-local"

@@ -775,36 +775,6 @@ variable "app_icon_url" {
   default     = ""
 }
 
-variable "enable_durable_object_bindings" {
-  description = "Enable DO bindings. For initial deployment: set to false (applies migrations), then set to true (adds bindings)."
-  type        = bool
-  default     = true
-}
-
-variable "control_plane_migration_tag" {
-  description = "Current migration tag for control plane DO migrations"
-  type        = string
-  default     = "v1"
-}
-
-variable "control_plane_migration_old_tag" {
-  description = "Previous migration tag for control plane DO migrations (null for fresh deployments)"
-  type        = string
-  default     = null
-}
-
-variable "control_plane_new_sqlite_classes" {
-  description = "DO classes new in this control plane migration step (empty means treat all configured classes as new)"
-  type        = list(string)
-  default     = []
-}
-
-variable "control_plane_deleted_classes" {
-  description = "DO classes deleted in this control plane migration step"
-  type        = list(string)
-  default     = []
-}
-
 variable "enable_service_bindings" {
   description = "Enable service bindings. Set false for initial deployment if target workers don't exist yet."
   type        = bool
@@ -815,26 +785,6 @@ variable "project_root" {
   description = "Root path to the project repository"
   type        = string
   default     = "../../../"
-}
-
-variable "build_workers_in_terraform" {
-  description = "Run `npm run build` for the control-plane and bot Worker bundles during apply. Set false when the bundles are built before plan (as CI does), so plan and apply deploy the same files and nothing rebuilds them mid-apply."
-  type        = bool
-  default     = true
-}
-
-variable "worker_bundle_sha256" {
-  description = "Expected SHA-256 of each prebuilt Worker bundle (`packages/<package>/dist/index.js`), keyed by package directory. A listed bundle whose file does not match fails the plan instead of deploying. Empty skips the check, which is what a local build wants."
-  type        = map(string)
-  default     = {}
-
-  validation {
-    condition = alltrue([
-      for package, sha256 in var.worker_bundle_sha256 :
-      contains(["control-plane", "slack-bot", "github-bot", "linear-bot"], package) && can(regex("^[0-9a-f]{64}$", sha256))
-    ])
-    error_message = "worker_bundle_sha256 keys must be control-plane, slack-bot, github-bot or linear-bot, and each value a lowercase hex SHA-256."
-  }
 }
 
 # =============================================================================

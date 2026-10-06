@@ -154,3 +154,46 @@ output "docs_site_url" {
   description = "Documentation site URL (null when docs_site_enabled = false)"
   value       = var.docs_site_enabled ? coalesce(local.docs_custom_domain_url, module.docs_site[0].production_url) : null
 }
+
+# Everything the deploy workflow needs from Terraform. It reads this with
+# `terraform output -json deploy_manifest` and renders one Wrangler config per
+# Worker. Sensitive: it carries every Worker secret.
+output "deploy_manifest" {
+  description = "Wrangler configs, secrets and D1 name for the Cloudflare deploy workflow"
+  sensitive   = true
+  value = {
+    version          = 1
+    d1_database_name = cloudflare_d1_database.main.name
+
+    # Keyed by package directory, the keys build-workers.yml records checksums under.
+    workers = merge(
+      {
+        "control-plane" = {
+          config_json = module.control_plane_worker.wrangler_config_json
+          secrets     = module.control_plane_worker.secrets
+        }
+      },
+      var.enable_slack_bot ? {
+        "slack-bot" = {
+          config_json = module.slack_bot_worker[0].wrangler_config_json
+          secrets     = module.slack_bot_worker[0].secrets
+        }
+      } : {},
+      var.enable_github_bot ? {
+        "github-bot" = {
+          config_json = module.github_bot_worker[0].wrangler_config_json
+          secrets     = module.github_bot_worker[0].secrets
+        }
+      } : {},
+      var.enable_linear_bot ? {
+        "linear-bot" = {
+          config_json = module.linear_bot_worker[0].wrangler_config_json
+          secrets     = module.linear_bot_worker[0].secrets
+        }
+      } : {}
+    )
+
+    # Null unless web_platform = "cloudflare".
+    web = local.web_cloudflare_deploy
+  }
+}

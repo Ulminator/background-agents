@@ -110,8 +110,10 @@ locals {
   docs_custom_domain_url = local.docs_custom_domain != null ? "https://${local.docs_custom_domain}" : null
 
   # Worker script paths (deterministic output locations)
-  control_plane_script_path = "${var.project_root}/packages/control-plane/dist/index.js"
-  slack_bot_script_path     = "${var.project_root}/packages/slack-bot/dist/index.js"
-  linear_bot_script_path    = "${var.project_root}/packages/linear-bot/dist/index.js"
-  github_bot_script_path    = "${var.project_root}/packages/github-bot/dist/index.js"
+  # Repository-relative, as build-workers.yml lays them out; the deploy workflow
+  # resolves them against its checkout.
+  control_plane_bundle_path = "packages/control-plane/dist/index.js"
+  slack_bot_bundle_path     = "packages/slack-bot/dist/index.js"
+  linear_bot_bundle_path    = "packages/linear-bot/dist/index.js"
+  github_bot_bundle_path    = "packages/github-bot/dist/index.js"
 }

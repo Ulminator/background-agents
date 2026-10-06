@@ -56,12 +56,14 @@ Key design decisions:
 
 ## Deployment
 
-The bot is deployed via Terraform as a standalone Cloudflare Worker alongside the existing workers.
+Terraform provisions the bot as a standalone Cloudflare Worker alongside the existing workers, and
+the `Deploy (Cloudflare)` workflow ships its code.
 
-**Two-phase deployment** (same pattern as the Slack bot):
+**First deployment** (same pattern as the Slack bot):
 
-1. Deploy with `enable_service_bindings = false` (creates the worker)
-2. Set `enable_service_bindings = true` and apply again (adds the `CONTROL_PLANE` binding)
+1. Apply and deploy with `enable_service_bindings = false` (creates the worker)
+2. Set `enable_service_bindings = true`, then apply and deploy again (adds the `CONTROL_PLANE`
+   binding)
 
 ### Environment Bindings
 

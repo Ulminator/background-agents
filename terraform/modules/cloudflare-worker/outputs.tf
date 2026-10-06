@@ -8,16 +8,6 @@ output "worker_id" {
   value       = cloudflare_worker.this.id
 }
 
-output "version_id" {
-  description = "The ID of the current worker version"
-  value       = cloudflare_worker_version.this.id
-}
-
-output "deployment_id" {
-  description = "The ID of the deployment"
-  value       = cloudflare_workers_deployment.this.id
-}
-
 output "worker_url" {
   description = "The workers.dev URL for the worker: https://<worker_name>.<worker_subdomain>.workers.dev"
   value       = "https://${cloudflare_worker.this.name}.${var.worker_subdomain}.workers.dev"
@@ -41,4 +31,15 @@ output "plain_text_bindings" {
 output "secret_binding_names" {
   description = "Names of configured secret bindings; secret values are not exposed."
   value       = nonsensitive(keys(var.secrets))
+}
+
+output "wrangler_config_json" {
+  description = "Wrangler configuration for this Worker as JSON, without secrets or Durable Object migrations. The deploy workflow writes it to wrangler.json."
+  value       = jsonencode(local.wrangler_config)
+}
+
+output "secrets" {
+  description = "Secret bindings as a name => value map, uploaded with each version through `wrangler deploy --secrets-file`."
+  value       = { for name, binding in var.secrets : name => binding.value }
+  sensitive   = true
 }
